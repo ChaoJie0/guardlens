@@ -1,7 +1,7 @@
 [project]
 name = "guardlens"
 version = "0.1.0"
-description = "RAG-native security analytics for autonomous Agent audit logs (W1: ingestion + metrics)"
+description = "RAG-native security analytics for autonomous Agent audit logs (W1+W2: ingestion, metrics, RAG)"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { file = "LICENSE" }
@@ -14,6 +14,11 @@ dependencies = [
     "pydantic>=2.9.0",
     "streamlit>=1.39.0",
     "plotly>=5.24.0",
+    # W2 — local embeddings + vector store + OpenAI-compatible LLM
+    "sentence-transformers>=3.0.0",
+    "chromadb>=0.5.0",
+    "openai>=1.50.0",
+    "pyyaml>=6.0",
 ]
 
 [dependency-groups]

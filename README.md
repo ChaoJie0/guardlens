@@ -4,8 +4,9 @@
 
 GuardLens turns the JSONL audit trail produced by [agent-gate](https://github.com/ChaoJie0/agent-gate) — a zero-trust permission gate for AI coding agents — into a queryable, measurable dataset.
 
-> W1 milestone (current): **data foundation + metrics layer** — streaming JSONL ingestion, pydantic validation, shell-command feature extraction, DuckDB persistence, baseline diffing, and a static Streamlit dashboard.
-> Planned W2–W4: hybrid retrieval (BM25 + embeddings), LLM evidence-grounded Q&A, evasion-pattern detection, and eval-driven tuning.
+> W1: **data foundation + metrics layer** — streaming JSONL ingestion, pydantic validation, shell-command feature extraction, DuckDB persistence, baseline diffing, and a static Streamlit dashboard.
+> W2 (current): **first RAG loop** — event semantic cards, local BGE-M3 embeddings in Chroma, and evidence-grounded streaming Q&A with mandatory citations.
+> Planned W3–W4: hybrid retrieval (BM25 + embeddings + rerank), Qdrant migration, evasion-pattern detection, and eval-driven tuning.
 
 ## Why this shape
 
@@ -28,9 +29,50 @@ uv run python -m guardlens.ingest \
   --input "/path/to/audit.jsonl" \
   --db data/derived/guardlens.duckdb
 
-# 3. open the dashboard
+# 3. open the dashboard (W1 metrics + W2 Q&A tabs)
 uv run streamlit run app.py
 ```
+
+## W2 — evidence-grounded RAG Q&A
+
+```bash
+# 1. build semantic cards/clusters + report chunks, embed with local BGE-M3,
+#    and persist into Chroma (first run downloads ~2GB model; CPU encode of
+#    ~5.5k docs takes ~15 min). HF mirror is used by default.
+uv run python -m guardlens.build_index \
+  --db data/derived/guardlens.duckdb \
+  --reports "/path/to/turn-reports"
+
+# 2. ask an evidence question headlessly (prints streaming answer + citations)
+uv run python examples/eval_qa.py
+```
+
+Then open the **💬 问答（W2 RAG）** tab in Streamlit.
+
+**Pipeline.** `corpus.py` builds three document types from DuckDB + the
+plugin's `turn-*.md` reports:
+
+* `event_card` — every deny / fail-closed / high-risk-allow event with its
+  **±5 surrounding events**, so an interception is understood in context
+  (e.g. `curl` denied → `web_fetch` to the same URL two seconds later);
+* `event_cluster` — sessions split by a 10-minute idle gap that contain
+  at least one deny/fail-closed event;
+* `report_chunk` — turn reports split by H2 section.
+
+`vectorstore.py` embeds them locally with **BGE-M3** (1024-d, seq-len capped
+at 1024 for CPU tractability) into Chroma (cosine). `retriever.py` does dense
+top-k with two W2-only pragmatic fixes (W3 adds BM25 + rerank): a per-type
+quota so concrete event cards aren't drowned by near-duplicate report chunks,
+and a **structured fallback** that anchors rare-but-real events (the 5
+fail-closed rows, `chmod`/`sudo` attempts) via metadata/keyword filters.
+
+**LLM.** No key is hard-coded. `llm_config.py` resolves an OpenAI-compatible
+endpoint from, in order: `GUARDLENS_LLM_*` env, `DEEPSEEK_API_KEY` (legacy-harness
+credentials → api.deepseek.com), or `VOLC_ARK_API_KEY` (Volcengine Ark coding
+endpoint). The Q&A prompt enforces: every claim cites a retrieved evidence id,
+numbers come from injected DuckDB `<stats>` (never invented), and insufficient
+evidence → “日志中未发现”. `qa.py` post-verifies every citation; SSE-style
+token streaming is exposed via `QAEngine.stream`.
 
 The ingest command prints core metrics and a **baseline diff** against a
 frozen 2026-09-19 snapshot of the author's corpus (21,754 events / 20,629
