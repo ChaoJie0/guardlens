@@ -29,7 +29,8 @@ uv run python -m guardlens.ingest \
   --input "/path/to/audit.jsonl" \
   --db data/derived/guardlens.duckdb
 
-# 3. open the dashboard (W1 metrics + W2 Q&A tabs)
+# 3. open the dashboard (W1 metrics, W3 hybrid Q&A, W3 security-signals tabs)
+#    The Q&A/signals tabs need Qdrant running (see W3 below).
 uv run streamlit run app.py
 ```
 
@@ -49,6 +50,73 @@ uv run python examples/eval_qa.py
 ```
 
 Then open the **💬 问答（W2 RAG）** tab in Streamlit.
+
+## W3 — production hardening & differentiated security analytics (v0.3-prod)
+
+W3 keeps the W2 evidence loop but swaps the retrieval backbone for a
+production stack and adds three security-domain analyses. Chroma remains on
+disk as the W2 fallback/baseline; **Qdrant is the primary store**.
+
+```bash
+# 1. start Qdrant (local persistent volume). If Docker Hub is unreachable,
+#    pull via a mirror and re-tag, e.g.:
+#      docker pull docker.1ms.run/qdrant/qdrant:v1.12.4
+#      docker tag  docker.1ms.run/qdrant/qdrant:v1.12.4 qdrant/qdrant:v1.12.4
+docker compose up -d                 # Qdrant on :6333 (REST/UI) :6334 (gRPC)
+
+# 2. (re)build the corpus, then embed with BGE-M3 on MPS and migrate to Qdrant.
+#    Payload carries ts/tool/category/decision/doc_type/evidence_id -> server
+#    side pre-filtering. 5,469 docs ~6.5 min on M5 MPS.
+uv run python -m guardlens.build_index --db data/derived/guardlens.duckdb \
+  --reports "/path/to/turn-reports"
+uv run python -m guardlens.migrate_qdrant
+
+# 3. W2-vs-W3 retrieval comparison (same questions, Recall@5, no LLM calls)
+uv run python examples/eval_w2_vs_w3.py
+```
+
+**Hybrid retrieval + rerank** (`bm25.py`, `hybrid.py`, `reranker.py`):
+
+* **dense**: BGE-M3 (MPS) top-N from Qdrant; **sparse**: a dependency-free
+  BM25 whose tokenizer keeps shell commands/flags/paths/URLs as exact terms
+  and indexes Chinese as overlapping bigrams, with anchor-body term boosting;
+* per-channel **type balancing** before **RRF (k=60)** fusion into a top-20
+  pool (the ~3.4× more numerous report chunks otherwise monopolise RRF);
+  intent expansions (绕过→`curl web_fetch 同 URL 换工具`) bridge abstract
+  phrasings to exact command cards;
+* **bge-reranker-v2-m3** cross-encodes the pool on MPS (≈10 pairs/s vs ≈4 on
+  CPU) and the result is rerank-dominant with minimal anchors (exact payload
+  filters, best-RRF candidate) so rare real events are never buried.
+* Measured on the same 8-question set: **mean Recall@5 0.507 (W2) → 0.647
+  (W3)**; exact-term/evasion questions improve most.
+
+**Query Router + guarded Text2SQL** (`router.py`, `sql_tool.py`,
+`orchestrator.py`): questions are deterministically routed to **STATS /
+EVIDENCE / MIXED**. STATS answers come from DuckDB and numbers are passed to
+the LLM **verbatim**; free-form SQL sits behind three gates — SELECT/WITH
+only, a read-only **copied** sandbox DB, and dry-run + row cap. See
+[ADR 0001](docs/adr/0001-stats-via-guarded-sql-not-llm.md).
+
+**Differentiated analytics** (`analytics.py`, 🚨 tab):
+
+* **风险族归因** — the 1,139 deny events merge into risk families
+  (外联 / 越界写 / 进程命令 / fail-closed / 不可回滚-unknown / 数据走私) with
+  family counts + representative events; the headline finding is
+  **unknown ≈ 75% → conservative policy + observability blind spot**.
+* **绕过序列检测** — deny(A) → a same-intent call(B) within a window with both
+  sides showing network intent (curl→web_fetch, web_fetch→python urllib,
+  `-A Mozilla` UA spoof, r.jinaai.cn proxy); 19 high-confidence signals.
+* **误拦代理分析 + 反馈闭环** — same substantive action (intent signature over
+  network/package/permission/convert verbs + target) denied then allowed
+  within N minutes = a policy-tuning hint; 👍/👎 is written to a **separate**
+  `feedback.duckdb` (audit data never mutated). It is a proxy, not a true FP
+  rate — human confirmation is the point.
+
+Citation hardening: every cited id must both exist in the corpus **and** be in
+that question's retrieved set, else it is flagged invalid; insufficient
+evidence still yields “日志中未发现”.
+
+
 
 **Pipeline.** `corpus.py` builds three document types from DuckDB + the
 plugin's `turn-*.md` reports:

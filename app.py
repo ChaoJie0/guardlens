@@ -18,7 +18,8 @@ import plotly.express as px
 import streamlit as st
 
 DB_PATH = Path("data/derived/guardlens.duckdb")
-CHROMA_PATH = Path("data/derived/chroma")
+CHROMA_PATH = Path("data/derived/chroma")  # W2 store, kept as fallback
+CORPUS_PATH = Path("data/derived/corpus/corpus.jsonl")
 
 st.set_page_config(page_title="GuardLens · Agent 审计分析台", layout="wide")
 
@@ -133,9 +134,15 @@ def render_dashboard() -> None:
 
 @st.cache_resource
 def get_engine():
-    from guardlens.qa import make_engine
+    # W3: router + guarded DuckDB stats + hybrid retrieval (BM25+dense RRF)
+    # + cross-encoder rerank. Requires `docker compose up -d` for Qdrant.
+    from guardlens.orchestrator import Orchestrator
 
-    return make_engine(str(CHROMA_PATH), k=6)
+    return Orchestrator(
+        corpus_path=str(CORPUS_PATH),
+        db_path=str(DB_PATH),
+        k=5,
+    )
 
 
 @st.cache_data
@@ -173,61 +180,205 @@ def stats_context() -> str:
 
 
 def render_qa() -> None:
-    if not CHROMA_PATH.exists():
-        st.error(f"向量库不存在：{CHROMA_PATH}，请先运行 `uv run python -m guardlens.build_index`")
+    if not CORPUS_PATH.exists():
+        st.error(f"语料不存在：{CORPUS_PATH}，请先运行 `uv run python -m guardlens.build_index`")
         st.stop()
 
     try:
         from guardlens.llm_config import resolve_config
 
         cfg = resolve_config()
-        st.caption(f"LLM: `{cfg.model}` @ {cfg.base_url}（来源 {cfg.source}）")
+        st.caption(
+            f"W3：BM25+稠密 RRF · bge-reranker · Qdrant payload 过滤 ｜ LLM `{cfg.model}`"
+            f" @ {cfg.base_url}（来源 {cfg.source}）"
+        )
     except Exception as exc:  # noqa: BLE001
         st.error(f"未找到可用 LLM 凭证：{exc}")
         st.stop()
 
     question = st.text_input(
-        "提问（证据类问题）",
-        placeholder="例如：curl 被拦是为什么？有没有绕过尝试？fail-closed 发生在什么场景？",
+        "提问（证据 / 统计 / 混合类均可，自动路由）",
+        placeholder="例如：拦截率多少？curl 被拦后有没有换 web_fetch？fail-closed 几起、什么场景？",
     )
     go = st.button("提问", type="primary")
     if not (go and question.strip()):
-        st.info("输入问题后点击「提问」，回答将流式输出并附带可点开的原始证据。")
+        st.info(
+            "STATS 类自动走 DuckDB 只读 SQL（数值不经过模型编造），EVIDENCE 类走混合检索+rerank，"
+            "MIXED 类先取数再检索。回答流式输出并附带原始证据。"
+        )
         return
 
     engine = get_engine()
     answer_box = st.empty()
+    route_box = st.empty()
     buf: list[str] = []
     hits: list = []
+    route = stats = None
 
-    with st.spinner("检索证据并生成中…"):
-        for ev in engine.stream(question, stats=stats_context()):
-            if ev["type"] == "hit":
+    with st.spinner("路由 / 取数 / 检索 / 生成中…"):
+        for ev in engine.stream(question):
+            t = ev["type"]
+            if t == "route":
+                route = ev["route"]
+                route_box.info(f"查询路由：**{route}**")
+            elif t == "stats":
+                stats = ev["stats"]
+                if stats:
+                    st.caption(f"📐 确定性取数（原样透传）：{stats}")
+            elif t == "hit":
                 hits.append(ev["hit"])
-            elif ev["type"] == "token":
+            elif t == "token":
                 buf.append(ev["delta"])
                 answer_box.markdown("".join(buf) + " ▌")
-            elif ev["type"] == "final":
+            elif t == "final":
                 answer = ev["answer"]
                 answer_box.markdown(answer.text)
                 meta_cols = st.columns(4)
-                meta_cols[0].metric("引用数", len(answer.valid_citations))
+                meta_cols[0].metric("有效引用", len(answer.valid_citations))
                 meta_cols[1].metric("非法引用", len(answer.invalid_citations))
                 meta_cols[2].metric("是否拒答", "是" if answer.abstained else "否")
                 meta_cols[3].metric("召回证据", len(answer.retrieved_ids))
                 if answer.invalid_citations:
-                    st.warning(f"模型引用了检索集之外的证据：{answer.invalid_citations}")
+                    st.warning(f"模型引用了检索集之外/不存在的证据：{answer.invalid_citations}")
 
     st.divider()
     st.subheader(f"证据（{len(hits)}）")
     for h in hits:
-        sim = f"相似度 {h.score:.3f}"
-        label = f"{h.evidence_id} · {h.doc_type} · {sim} · {h.ts or ''}"
+        score = f"rerank {h.score:.3f}"
+        label = f"{h.evidence_id} · {h.doc_type} · {score} · {h.ts or ''}"
         with st.expander(label):
             st.caption(
                 f"tool={h.tool or '-'} category={h.category or '-'} decision={h.decision or '-'}"
             )
             st.text(h.text)
+            _feedback_row(question, h)
+
+
+def _feedback_row(question: str, h) -> None:
+    """👍/👎 human confirmation loop; feedback goes to a separate DuckDB."""
+    from guardlens.feedback import FEEDBACK_DB_DEFAULT, Feedback, add_feedback, verdict_counts
+
+    key = f"fb_{h.evidence_id}_{abs(hash(question)) % 100000}"
+    c1, c2, note_box = st.columns([1, 1, 6])
+    if c1.button("👍 准确", key=f"{key}_up"):
+        add_feedback(
+            Feedback(
+                question=question,
+                evidence_id=h.evidence_id,
+                verdict="up",
+                answer_excerpt=h.text[:200],
+            ),
+            FEEDBACK_DB_DEFAULT,
+        )
+        st.toast("已记录为准确（策略可保持）")
+    if c2.button("👎 误拦/无关", key=f"{key}_down"):
+        add_feedback(
+            Feedback(
+                question=question,
+                evidence_id=h.evidence_id,
+                verdict="down",
+                answer_excerpt=h.text[:200],
+            ),
+            FEEDBACK_DB_DEFAULT,
+        )
+        st.toast("已记录为疑似误拦/无关，进入人工确认闭环")
+    counts = verdict_counts(FEEDBACK_DB_DEFAULT)
+    note_box.caption(
+        f"人工反馈累计：👍 {counts['up']} ｜ 👎 {counts['down']}（写入独立反馈库，不改审计数据）"
+    )
+
+
+# ---------------------------------------------------------------------------
+# W3 security signals: risk families / evasion / false-positive proxies
+# ---------------------------------------------------------------------------
+
+
+@st.cache_data
+def _risk_families():
+    from guardlens.analytics import risk_families
+
+    return risk_families(str(DB_PATH))
+
+
+@st.cache_data
+def _evasion_signals():
+    from guardlens.analytics import detect_evasion
+
+    return detect_evasion(str(DB_PATH))
+
+
+@st.cache_data
+def _fp_proxies():
+    from guardlens.analytics import detect_fp_proxies
+
+    return detect_fp_proxies(str(DB_PATH))
+
+
+def render_signals() -> None:
+    st.subheader("🧭 风险族归因（deny 事件归并）")
+    fams = _risk_families()
+    total = sum(f.count for f in fams)
+    st.caption(
+        f"共 {total} 条 deny 归并为 {len(fams)} 个风险族；unknown 占比高=策略保守/可观测盲区。"
+    )
+    fdf = pd.DataFrame(
+        [{"风险族": f.label, "key": f.key, "数量": f.count, "占比%": f.pct} for f in fams]
+    )
+    st.dataframe(fdf, width="stretch", hide_index=True)
+    st.plotly_chart(
+        px.pie(fdf, names="风险族", values="数量", title="deny 风险族分布"),
+        use_container_width=True,
+    )
+    for f in fams:
+        with st.expander(f"{f.label} · {f.count} 起（{f.pct}%）— 代表事件"):
+            for e in f.examples:
+                st.code(
+                    f"{e['ts']}\n{e['tool']} / {e['category']}\n"
+                    f"{(e['command'] or e['reason'])[:240]}",
+                    language="bash",
+                )
+
+    st.divider()
+    st.subheader("🕵️ 绕过序列检测（deny → 短时同义/换工具调用）")
+    ev = _evasion_signals()
+    st.caption(f"命中 {len(ev)} 条疑似绕行信号（规则：双侧网络意图 + 换工具或命令改写）。")
+    edf = pd.DataFrame(
+        [
+            {
+                "信号": s.evidence_id,
+                "类型": s.kind,
+                "间隔s": s.delta_sec,
+                "被拦工具": s.denied_tool,
+                "随后工具": s.follow_tool,
+                "被拦命令": s.denied_command,
+                "随后调用": s.follow_command,
+            }
+            for s in ev
+        ]
+    )
+    st.dataframe(edf, width="stretch", hide_index=True)
+
+    st.divider()
+    st.subheader("🩺 误拦代理分析（同意图 deny→allow，疑似可策略优化）")
+    fps = _fp_proxies()
+    st.caption(
+        f"命中 {len(fps)} 条代理信号（同一实质动作被拦后换法成功）。"
+        "这是代理指标而非真实误报率——需用 👎/👍 人工确认，闭环在问答页证据卡上。"
+    )
+    fpdf = pd.DataFrame(
+        [
+            {
+                "信号": p.evidence_id,
+                "工具": p.tool,
+                "间隔s": p.delta_sec,
+                "意图签名": p.pattern,
+                "被拦": p.denied_summary,
+                "随后放行": p.allow_summary,
+            }
+            for p in fps
+        ]
+    )
+    st.dataframe(fpdf, width="stretch", hide_index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -235,8 +386,12 @@ def render_qa() -> None:
 # ---------------------------------------------------------------------------
 
 st.title("🛡️ GuardLens — agent-gate 审计日志分析")
-tab_dash, tab_qa = st.tabs(["📊 看板（W1）", "💬 问答（W2 RAG）"])
+tab_dash, tab_qa, tab_sig = st.tabs(
+    ["📊 看板（W1）", "💬 问答（W3 混合检索+Rerank）", "🚨 安全信号（W3）"]
+)
 with tab_dash:
     render_dashboard()
 with tab_qa:
     render_qa()
+with tab_sig:
+    render_signals()
