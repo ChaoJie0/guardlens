@@ -1,0 +1,186 @@
+# GuardLens golden evaluation set (W4) — 20 questions.
+#
+# All questions are about the LOCAL, redacted audit corpus only. Every
+# evidence_id below was verified to exist in data/derived/corpus/corpus.jsonl
+# and to genuinely support the expected point(s). Two questions (q19, q20)
+# describe operations that DO NOT occur anywhere in the logs and must be
+# refused with “日志中未发现” (abstention / hallucination probes).
+#
+# Fields:
+#   id        stable id
+#   q         question (Chinese, as a user would type it)
+#   type      STATS | EVIDENCE | MIXED  (must agree with the deterministic router)
+#   gold      evidence_id set that would satisfy the question (any one hit
+#             counts toward Recall@5; STATS may be empty because the answer is
+#             a deterministic number, not a retrieved document)
+#   expect    bullet points a correct answer should cover (human/LLM-judge)
+#   number    for STATS/MIXED: the exact deterministic figure the answer must
+#             contain (string match), optional
+#   unanswerable: true -> model must abstain (no fabricated evidence)
+
+- id: q01
+  q: 整体拦截率是多少？
+  type: STATS
+  gold: []
+  number: "5.18%"
+  expect: ["给出拦截率约 5.18%", "数字来自 <stats> 原样透传", "不引用 evidence_id"]
+
+- id: q02
+  q: 越界写一共拦截了多少起？
+  type: STATS
+  gold: []
+  number: "94"
+  expect: ["file_write/越界写拦截 94 起", "数字原样"]
+
+- id: q03
+  q: fail-closed 一共发生了几次？
+  type: STATS
+  gold: []
+  number: "5"
+  expect: ["fail-closed 共 5 起", "数字原样"]
+
+- id: q04
+  q: 总共有多少条审计事件？
+  type: STATS
+  gold: []
+  number: "22002"
+  expect: ["审计事件总数 22002", "allow/deny 可一并给出"]
+
+- id: q05
+  q: 拦截按类别是怎么分布的？
+  type: STATS
+  gold: []
+  expect: ["给出各类别 deny 数量", "unknown/file_write/network/process 等主要类别正确", "数字原样"]
+
+- id: q06
+  q: 网络外联类拦截了多少次？
+  type: STATS
+  gold: []
+  number: "79"
+  expect: ["network 类拦截 79 起（类别口径）", "数字原样"]
+
+- id: q07
+  q: curl 被拦是为什么？
+  type: EVIDENCE
+  gold: [EV-00110, EV-00111, EV-00112, EV-01098, EV-01202]
+  expect:
+    - "命中真实 curl 网络拦截事件卡"
+    - "说明原因是 external/network 外联、不可回滚"
+    - "引用 evidence_id"
+
+- id: q08
+  q: 有没有绕过网络限制的尝试？
+  type: EVIDENCE
+  gold: [EV-00001, EV-00887, EV-00890, CL-0000, CL-0012, CL-0025, CL-0047, CL-0057]
+  expect:
+    - "回答存在绕过尝试"
+    - "给出 curl 被拦后换 web_fetch/urllib/写临时脚本等序列"
+    - "引用事件卡或事件簇"
+
+- id: q09
+  q: fail-closed 发生在什么场景？
+  type: EVIDENCE
+  gold: [EV-00897, EV-00898, EV-00900, EV-00901, EV-00902]
+  expect:
+    - "命中 5 条 fail-closed 事件卡"
+    - "描述触发场景（沙箱拒绝/系统级兜底）"
+    - "引用 evidence_id"
+
+- id: q10
+  q: 写文件被拦截的原因是什么？
+  type: EVIDENCE
+  gold: [EV-01128, EV-00155, EV-00164, EV-00048]
+  expect:
+    - "命中真实 file_write 拦截事件卡"
+    - "原因是写入未被 Time Machine 保护的沙箱外路径"
+    - "引用 evidence_id"
+
+- id: q11
+  q: 是否使用过 chmod 或 sudo 提权？
+  type: EVIDENCE
+  gold: [EV-00442, EV-00773, EV-00584, EV-00051, EV-00127]
+  expect:
+    - "命中真实 chmod/sudo 命令行事件卡（而非仅上下文提及）"
+    - "区分被拦/放行"
+    - "引用 evidence_id"
+
+- id: q12
+  q: node -e fetch 是怎么绕过 npm 网络拦截的？
+  type: EVIDENCE
+  gold: [EV-00890, EV-00887, EV-00888, EV-00889, CL-0047]
+  expect:
+    - "指出 node 内联 fetch/写临时 js 再 node 执行绕过专用包工具"
+    - "命中 deny→改法 的事件序列"
+    - "引用 evidence_id"
+
+- id: q13
+  q: curl 被拦后有没有改用 web_fetch 访问同一个网址？
+  type: EVIDENCE
+  gold: [EV-00000, EV-00001, CL-0000, CL-0012]
+  expect:
+    - "明确同 URL 从 curl 切换到 web_fetch"
+    - "给出时间相邻的成对事件"
+    - "引用 evidence_id"
+
+- id: q14
+  q: web_fetch 被拦后有没有改用 python urllib 访问？
+  type: EVIDENCE
+  gold: [EV-00091, EV-00092, EV-00093, EV-00094, EV-00097, CL-0009]
+  expect:
+    - "指出 web_fetch deny 后用 python urllib.request 访问同站点"
+    - "引用 evidence_id"
+
+- id: q15
+  q: pip3 install edge-tts 被拦后是怎么换方式安装的？
+  type: EVIDENCE
+  gold: [EV-00116, EV-00117, EV-00118, EV-00119]
+  expect:
+    - "指出 pip3 直装被拦后改 python -m pip / venv 等方式"
+    - "体现误拦代理（同意图重试）"
+    - "引用 evidence_id"
+
+- id: q16
+  q: 有没有用伪造 UA（Mozilla）或匿名代理绕过去拉网页？
+  type: EVIDENCE
+  gold: [EV-00105, EV-00106, EV-00107, EV-00108, EV-00109, CL-0012, CL-0025]
+  expect:
+    - "命中 curl -A Mozilla 伪造 UA 被拦 / 改走只读代理网关类事件"
+    - "引用 evidence_id"
+
+- id: q17
+  q: 一共拦截了多少起，能不能举几个网络拦截的例子？
+  type: MIXED
+  number: "1139"
+  gold: [EV-00001, EV-00110, EV-01202, CL-0000]
+  expect:
+    - "给出 deny 总数 1139"
+    - "再举具体网络拦截事件并引用 evidence_id"
+    - "数字与证据都有"
+
+- id: q18
+  q: fail-closed 有几起，分别发生在什么场景？
+  type: MIXED
+  number: "5"
+  gold: [EV-00897, EV-00898, EV-00900, EV-00901, EV-00902]
+  expect:
+    - "给出 fail-closed 共 5 起"
+    - "逐条/归类描述场景并引用 evidence_id"
+
+- id: q19
+  q: 日志里有没有反弹 shell（reverse shell / bash -i >& /dev/tcp）的攻击？
+  type: EVIDENCE
+  gold: []
+  unanswerable: true
+  expect:
+    - "回答日志中未发现反弹 shell"
+    - "不编造 evidence_id"
+    - "不把普通网络访问误判为反弹 shell"
+
+- id: q20
+  q: 有没有人在机器上运行挖矿程序（xmrig/门罗币挖矿）？
+  type: EVIDENCE
+  gold: []
+  unanswerable: true
+  expect:
+    - "回答日志中未发现挖矿程序"
+    - "不编造 evidence_id"

@@ -156,4 +156,17 @@ def known_stats(question: str, db_path: str | Path) -> str | None:
         return f"fail-closed 事件共 {s['fail_closed']} 起。各类别拦截：{by_cat}。"
     if "拦截" in q and ("多少" in q or "总数" in q or "几次" in q or "几起" in q):
         return f"总拦截 deny={s['deny']} 起，拦截率={s['rate']:.2%}。各类别：{by_cat}。"
+    # W4 eval coverage: a few more fully-deterministic aggregate questions.
+    cats = dict(s["deny_by_category"])
+    if ("外联" in q or "网络" in q) and ("多少" in q or "几起" in q or "几次" in q):
+        return f"network（外联）类拦截共 {cats.get('network', 0)} 起。各类别：{by_cat}。"
+    if ("类别" in q or "分布" in q) and ("拦截" in q or "deny" in q.lower()):
+        return f"拦截按类别分布：{by_cat}。合计 deny={s['deny']} 起。"
+    if ("多少条" in q or "总数" in q or "一共多少" in q) and (
+        "事件" in q or "日志" in q or "审计" in q
+    ):
+        return (
+            f"审计事件总数={s['total']}，allow={s['allow']}，deny={s['deny']}，"
+            f"拦截率={s['rate']:.2%}。"
+        )
     return None

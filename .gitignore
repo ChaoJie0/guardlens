@@ -30,3 +30,6 @@ data/derived/
 
 # local run logs
 .logs/
+
+# W4 eval machine artifact (eval_report.md is the human artifact)
+eval/results.json

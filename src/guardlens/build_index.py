@@ -3,7 +3,7 @@
 Usage:
     uv run python -m guardlens.build_index \
         --db data/derived/guardlens.duckdb \
-        --reports "/path/to/turn-reports"
+        --reports "/path/on/your/machine/reports"
 """
 
 from __future__ import annotations
@@ -22,8 +22,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--db", default="data/derived/guardlens.duckdb")
     parser.add_argument(
         "--reports",
-        default="/path/to/turn-reports",
-        help="turn-*.md reports dir (optional)",
+        default="",
+        help="turn-*.md reports dir (optional; pass your local reports path)",
     )
     parser.add_argument("--out", default="data/derived/corpus")
     parser.add_argument("--chroma", default="data/derived/chroma")

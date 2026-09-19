@@ -2,11 +2,11 @@
 
 Usage:
     uv run python -m guardlens.ingest \
-        --input "/path/to/audit.jsonl" \
+        --input "/path/on/your/machine/audit.jsonl" \
         --db data/derived/guardlens.duckdb
 
-W1 keeps real paths by default. Add --redact to build a shareable dataset
-(/Users/<name> -> /Users/user, plus email/IP/token scrubbing).
+Paths are local and user-supplied. Add --redact to build a shareable dataset
+(home paths -> /Users/user, plus email/IP/token scrubbing).
 """
 
 from __future__ import annotations
@@ -351,8 +351,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Ingest agent-gate audit.jsonl into DuckDB")
     parser.add_argument(
         "--input",
-        default="/path/to/audit.jsonl",
-        help="Path to audit.jsonl",
+        default="data/raw/audit.jsonl",
+        help="Path to audit.jsonl (local; pass your own machine's path)",
     )
     parser.add_argument("--db", default="data/derived/guardlens.duckdb")
     parser.add_argument(
