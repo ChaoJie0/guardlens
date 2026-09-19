@@ -37,8 +37,15 @@ def main(argv: list[str] | None = None) -> int:
     for t, n in by_type.most_common():
         print(f"  {t:<16} {n}")
 
+    embedder = Embedder()
+    # force model load now so the chosen device is reported before encoding
+    _ = embedder.model
+    print(
+        f"embedder: {embedder.model_name} device={embedder.device} "
+        f"seq_len={embedder.max_seq_len} batch={embedder.batch_size}"
+    )
     t1 = time.perf_counter()
-    n = index_documents(docs, args.chroma, embedder=Embedder())
+    n = index_documents(docs, args.chroma, embedder=embedder)
     print(f"indexed {n} docs into Chroma in {time.perf_counter() - t1:.1f}s -> {args.chroma}")
     return 0
 

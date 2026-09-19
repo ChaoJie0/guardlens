@@ -37,8 +37,9 @@ uv run streamlit run app.py
 
 ```bash
 # 1. build semantic cards/clusters + report chunks, embed with local BGE-M3,
-#    and persist into Chroma (first run downloads ~2GB model; CPU encode of
-#    ~5.5k docs takes ~15 min). HF mirror is used by default.
+#    and persist into Chroma (first run downloads the ~2GB model; on Apple
+#    Silicon it auto-uses the Metal/MPS GPU: ~7 min for 5.5k docs at seq384,
+#    vs ~22 min on CPU). HF mirror is used by default.
 uv run python -m guardlens.build_index \
   --db data/derived/guardlens.duckdb \
   --reports "/path/to/turn-reports"
@@ -59,8 +60,13 @@ plugin's `turn-*.md` reports:
   at least one deny/fail-closed event;
 * `report_chunk` — turn reports split by H2 section.
 
-`vectorstore.py` embeds them locally with **BGE-M3** (1024-d, seq-len capped
-at 1024 for CPU tractability) into Chroma (cosine). `retriever.py` does dense
+`vectorstore.py` embeds them locally with **BGE-M3** (1024-d; embedding input
+capped at 384 tokens for speed while full text is still stored for the LLM)
+into Chroma (cosine). It auto-selects **Apple Metal/MPS** when available
+(`device="mps"` with a real-encode probe, falling back to CPU; override with
+the Embedder `device=` arg), uses batch 64 on GPU, and—if the model is cached—
+runs HuggingFace in offline mode to skip the slow huggingface.co HEAD retry.
+`retriever.py` does dense
 top-k with two W2-only pragmatic fixes (W3 adds BM25 + rerank): a per-type
 quota so concrete event cards aren't drowned by near-duplicate report chunks,
 and a **structured fallback** that anchors rare-but-real events (the 5
