@@ -1,0 +1,57 @@
+[project]
+name = "guardlens"
+version = "0.1.0"
+description = "RAG-native security analytics for autonomous Agent audit logs (W1: ingestion + metrics)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Chaojie Tian" },
+]
+dependencies = [
+    "duckdb>=1.1.0",
+    "pandas>=2.2.0",
+    "pydantic>=2.9.0",
+    "streamlit>=1.39.0",
+    "plotly>=5.24.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "ruff>=0.7.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.16,<0.12.0"]
+build-backend = "uv_build"
+
+# ---------------------------------------------------------------------------
+# Tooling
+# ---------------------------------------------------------------------------
+
+[tool.uv]
+package = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+]
+
+[tool.ruff.format]
+quote-style = "double"

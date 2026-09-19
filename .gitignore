@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# testing / quality
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# GuardLens runtime data (never commit real audit logs or derived DBs)
+data/raw/
+data/quarantine/
+data/derived/
+*.duckdb
+*.duckdb.wal
+*.parquet
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# local run logs
+.logs/
