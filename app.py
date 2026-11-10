@@ -206,9 +206,16 @@ def stats_context() -> str:
 
 
 def render_qa() -> None:
+    # The Q&A tab degrades gracefully: without a corpus / key / backend the
+    # metrics and signal tabs stay usable.
     if not CORPUS_PATH.exists():
-        st.error(f"语料不存在：{CORPUS_PATH}，请先运行 `uv run python -m guardlens.build_index`")
-        st.stop()
+        st.info(
+            f"问答需要先构建语料（当前缺少：{CORPUS_PATH}）。\n\n"
+            "先跑 `uv run python -m guardlens.build_index` 和 "
+            "`uv run python -m guardlens.migrate_qdrant`，再启动 "
+            "`uv run uvicorn guardlens.server:app --port 8000`。"
+        )
+        return
 
     try:
         from guardlens.llm_config import resolve_config
@@ -219,15 +226,15 @@ def render_qa() -> None:
             f" @ {cfg.base_url}（来源 {cfg.source}）"
         )
     except Exception as exc:  # noqa: BLE001
-        st.error(f"未找到可用 LLM 凭证：{exc}")
-        st.stop()
+        st.warning(f"未找到可用 LLM 凭证，问答暂不可用：{exc}")
+        return
 
     if not api_health():
-        st.error(
+        st.info(
             "后端模型服务未启动。请先运行：`uv run uvicorn guardlens.server:app --port 8000`"
             "（首次启动会加载本地模型，约 1 分钟）"
         )
-        st.stop()
+        return
 
     question = st.text_input(
         "提问（证据 / 统计 / 混合类均可，自动路由）",
@@ -363,7 +370,7 @@ def render_signals() -> None:
     st.dataframe(fdf, width="stretch", hide_index=True)
     st.plotly_chart(
         px.pie(fdf, names="风险族", values="数量", title="deny 风险族分布"),
-        use_container_width=True,
+        width="stretch",
     )
     for f in fams:
         with st.expander(f"{f.label} · {f.count} 起（{f.pct}%）— 代表事件"):
