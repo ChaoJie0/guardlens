@@ -1,35 +1,26 @@
-"""Resolve an OpenAI-compatible LLM endpoint from the local machine.
+"""Resolve an OpenAI-compatible LLM endpoint from the environment.
 
-No API key is ever hard-coded or printed. Resolution order:
+No API key is ever hard-coded, logged or printed. Resolution order:
 
-1. Explicit env: ``GUARDLENS_LLM_BASE_URL`` + ``GUARDLENS_LLM_API_KEY``
-   (optionally ``GUARDLENS_LLM_MODEL``).
-2. ``DEEPSEEK_API_KEY`` env / local credentials file -> DeepSeek official
-   OpenAI-compatible endpoint.
-3. ``VOLC_ARK_API_KEY`` env / local settings + credentials file -> Volcengine
-   Ark coding endpoint (also OpenAI-compatible).
+1. ``GUARDLENS_LLM_API_KEY`` + ``GUARDLENS_LLM_BASE_URL``
+   (optionally ``GUARDLENS_LLM_MODEL``) — fully explicit, any provider.
+2. ``OPENAI_API_KEY`` (+ optional ``OPENAI_BASE_URL`` / ``GUARDLENS_LLM_MODEL``)
+   — the standard variable names used by the OpenAI SDK and most gateways.
 
-The local credentials file is ``~/.config/llm/credentials.yaml`` with top-level
-``refs:`` mapping key-name -> value. We parse only the specific keys we need
-and never expose the secret.
+Nothing outside the repository is read, so the same code works on any machine:
+export the variables in your shell, or put them in a local ``.env`` (untracked).
+
+GuardLens only needs an OpenAI-compatible *chat completions* endpoint; the
+model never touches raw logs, it only organises retrieved, cited evidence.
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
 
-import yaml
-
-LEGACY_CREDENTIALS = Path.home() / ".config" / "llm" / "credentials.yaml"
-LEGACY_SETTINGS = Path.home() / ".config" / "llm" / "settings.yaml"
-
-DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-ARK_BASE_URL = "https://api.example.com/v1"
-ARK_MODEL = "ark-code-latest"
-DEEPSEEK_MODEL = "deepseek-flash"
+DEFAULT_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_MODEL = "gpt-4o-mini"
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,8 +29,8 @@ class LLMConfig:
     base_url: str
     model: str
     source: str
-    # DeepSeek flash defaults to thinking mode which can return empty
-    # immediate content; disable it for grounded Q&A (passed as extra_body).
+    # Some providers (e.g. thinking-mode models) attach an empty reasoning
+    # preamble; disable it for grounded Q&A. Passed as extra_body.
     disable_thinking: bool = False
 
     def masked(self) -> str:
@@ -47,59 +38,32 @@ class LLMConfig:
         return f"{k[:3]}***{k[-2:]}" if len(k) > 6 else "***"
 
 
-def _read_credentials_refs() -> dict[str, Any]:
-    """Return the ``refs:`` mapping from local credentials, if present."""
-    try:
-        data = yaml.safe_load(LEGACY_CREDENTIALS.read_text())
-    except (FileNotFoundError, yaml.YAMLError, OSError):
-        return {}
-    refs = data.get("refs") if isinstance(data, dict) else None
-    return refs if isinstance(refs, dict) else {}
-
-
 def resolve_config() -> LLMConfig:
     """Find the first usable OpenAI-compatible endpoint."""
-    refs = _read_credentials_refs()
-
-    def env_or_ref(name: str) -> str | None:
-        val = os.environ.get(name)
-        if val:
-            return val
-        val = refs.get(name)
-        return val if isinstance(val, str) and val else None
-
-    # 1) fully explicit override
-    if os.environ.get("GUARDLENS_LLM_API_KEY") and os.environ.get("GUARDLENS_LLM_BASE_URL"):
+    # 1) explicit GuardLens override
+    key = os.environ.get("GUARDLENS_LLM_API_KEY")
+    base = os.environ.get("GUARDLENS_LLM_BASE_URL")
+    if key and base:
         return LLMConfig(
-            api_key=os.environ["GUARDLENS_LLM_API_KEY"],
-            base_url=os.environ["GUARDLENS_LLM_BASE_URL"],
-            model=os.environ.get("GUARDLENS_LLM_MODEL", DEEPSEEK_MODEL),
+            api_key=key,
+            base_url=base,
+            model=os.environ.get("GUARDLENS_LLM_MODEL", DEFAULT_MODEL),
             source="env:GUARDLENS_LLM_*",
         )
 
-    # 2) DeepSeek official
-    dk = env_or_ref("DEEPSEEK_API_KEY")
-    if dk:
+    # 2) conventional OpenAI SDK variables
+    key = os.environ.get("OPENAI_API_KEY")
+    if key:
         return LLMConfig(
-            api_key=dk,
-            base_url=os.environ.get("DEEPSEEK_BASE_URL", DEEPSEEK_BASE_URL),
-            model=os.environ.get("GUARDLENS_LLM_MODEL", DEEPSEEK_MODEL),
-            source="DEEPSEEK_API_KEY (local credentials)",
-            disable_thinking=True,
-        )
-
-    # 3) Volcengine Ark coding endpoint
-    ak = env_or_ref("VOLC_ARK_API_KEY")
-    if ak:
-        return LLMConfig(
-            api_key=ak,
-            base_url=ARK_BASE_URL,
-            model=os.environ.get("GUARDLENS_LLM_MODEL", ARK_MODEL),
-            source="VOLC_ARK_API_KEY (local settings)",
+            api_key=key,
+            base_url=os.environ.get("OPENAI_BASE_URL", DEFAULT_BASE_URL),
+            model=os.environ.get("GUARDLENS_LLM_MODEL", DEFAULT_MODEL),
+            source="env:OPENAI_API_KEY",
         )
 
     raise RuntimeError(
-        "No OpenAI-compatible API key found. Set DEEPSEEK_API_KEY / VOLC_ARK_API_KEY "
-        f"in env or {LEGACY_CREDENTIALS} (refs:), or set GUARDLENS_LLM_API_KEY + "
-        "GUARDLENS_LLM_BASE_URL."
+        "No OpenAI-compatible API key found. Set GUARDLENS_LLM_API_KEY + "
+        "GUARDLENS_LLM_BASE_URL (and optionally GUARDLENS_LLM_MODEL), or set "
+        "OPENAI_API_KEY (+ OPENAI_BASE_URL). Retrieval, embedding and analytics "
+        "run without a key; only the LLM answer step needs one."
     )

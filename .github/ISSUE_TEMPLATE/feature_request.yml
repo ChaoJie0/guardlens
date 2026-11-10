@@ -1,0 +1,33 @@
+name: Feature request
+description: Propose a change or an addition
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that GuardLens makes hard today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What you would like to happen, and which module it touches.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: invariant
+    attributes:
+      label: Does this affect a design invariant?
+      description: Numbers from SQL, verified citations, abstention, read-only SQL, local-only calls.
+      options:
+        - "No"
+        - "Yes — explained in the proposal"
+        - "Not sure"
+    validations:
+      required: true

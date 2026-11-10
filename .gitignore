@@ -1,4 +1,4 @@
-# Python
+# --- Python ---------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -8,28 +8,47 @@ dist/
 .venv/
 venv/
 
-# testing / quality
+# --- testing / quality ----------------------------------------------------
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
 .coverage
+coverage.xml
 htmlcov/
 
-# GuardLens runtime data (never commit real audit logs or derived DBs)
+# --- GuardLens runtime data ----------------------------------------------
+# Never commit real audit logs, derived databases or vector stores.
 data/raw/
 data/quarantine/
 data/derived/
 *.duckdb
 *.duckdb.wal
+*.duckdb.bak*
 *.parquet
+*.jsonl.tmp
 
-# OS / editor
+# local run logs
+.logs/
+*.log
+
+# W4 machine artifact (eval_report.md is the human artifact and is committed)
+eval/results.json
+
+# --- secrets --------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- OS / editor ----------------------------------------------------------
 .DS_Store
 .idea/
 .vscode/
 *.swp
+*~
 
-# local run logs
-.logs/
-
-# W4 eval machine artifact (eval_report.md is the human artifact)
-eval/results.json
+# --- local scratch (not for publication) ----------------------------------
+# Raw log dumps / ad-hoc analysis notes taken while working on the corpus.
+fp-proxies-detail.md
+notes-private/

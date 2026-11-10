@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use GuardLens in academic or technical work, please cite it as below."
+title: "GuardLens: RAG-native security analytics for autonomous agent audit logs"
+abstract: >-
+  GuardLens ingests the JSONL audit trail of an autonomous agent's permission
+  gate, computes DuckDB-backed metrics, retrieves evidence with hybrid
+  BM25 + dense retrieval and cross-encoder reranking, answers questions with
+  verified citations, routes statistics through guarded read-only SQL, and
+  evaluates the whole pipeline on a golden set.
+authors:
+  - family-names: Tian
+    given-names: Chaojie
+version: 0.4.0
+date-released: "2026-11-10"
+license: MIT
+type: software
+keywords:
+  - retrieval-augmented generation
+  - security analytics
+  - audit logs
+  - ai agents
+  - observability

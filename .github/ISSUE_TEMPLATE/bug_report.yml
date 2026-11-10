@@ -1,0 +1,61 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please **do not** include real audit lines, usernames, hostnames or API
+        keys. Redact first (`--redact`) or hand-craft a minimal example.
+        Security issues go through Security → Advisories instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Actual behaviour, including the full error text.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Exact commands, and the smallest redacted input that triggers it.
+      placeholder: |
+        uv sync
+        uv run python -m guardlens.ingest --input sample.jsonl --db /tmp/x.duckdb
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      placeholder: "v0.4.0 or git SHA"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - ingestion / schema
+        - retrieval / corpus
+        - Q&A / citations
+        - SQL router
+        - analytics
+        - dashboard / API
+        - evaluation
+        - docs
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, Apple Silicon or CPU, Docker/Qdrant running, LLM provider.

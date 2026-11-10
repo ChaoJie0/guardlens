@@ -46,7 +46,7 @@ def _docs() -> list[Document]:
         Document(
             evidence_id="EV-00002",
             doc_type="event_card",
-            text="agent-gate no rollback net，Time Machine unhealthy，write denied",
+            text="agent gate: unrollbackable write, snapshot unhealthy, write denied",
             ts="2026-09-16T14:39:48Z",
             tool="write",
             category="fail-closed",

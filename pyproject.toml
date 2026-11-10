@@ -1,12 +1,32 @@
 [project]
 name = "guardlens"
-version = "0.1.0"
-description = "RAG-native security analytics for autonomous Agent audit logs (W1+W2: ingestion, metrics, RAG)"
+version = "0.4.0"
+description = "RAG-native security analytics for autonomous agent audit logs: ingestion, metrics, cited hybrid-retrieval Q&A, guarded SQL and offline evaluation"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Chaojie Tian" },
+]
+keywords = [
+    "rag",
+    "security-analytics",
+    "audit-logs",
+    "ai-agents",
+    "retrieval",
+    "observability",
+    "siem",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Scientific/Engineering :: Information Analysis",
 ]
 dependencies = [
     "duckdb>=1.1.0",
@@ -14,12 +34,15 @@ dependencies = [
     "pydantic>=2.9.0",
     "streamlit>=1.39.0",
     "plotly>=5.24.0",
-    # W2 — local embeddings + vector store + OpenAI-compatible LLM
+    # local embeddings + vector stores + OpenAI-compatible LLM
     "sentence-transformers>=3.0.0",
     "chromadb>=0.5.0",
     "openai>=1.50.0",
     "pyyaml>=6.0",
     "qdrant-client>=1.19.1",
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.53.0",
+    "httpx>=0.28.1",
 ]
 
 [dependency-groups]
@@ -39,9 +62,9 @@ build-backend = "uv_build"
 [tool.uv]
 package = true
 
-[[tool.uv.index]]
-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
-default = true
+# Uses the default PyPI index so the project resolves anywhere. If PyPI is
+# slow from your network, override locally instead of editing this file:
+#   export UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

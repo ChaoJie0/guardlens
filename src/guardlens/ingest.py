@@ -1,4 +1,4 @@
-"""Streaming ingestion: agent-gate audit.jsonl -> validated rows -> DuckDB.
+"""Streaming ingestion: audit.jsonl -> validated rows -> DuckDB.
 
 Usage:
     uv run python -m guardlens.ingest \
@@ -28,33 +28,41 @@ from .parsing import extract_command_features
 from .redaction import redact_path, redact_text
 from .schema import Event
 
-# Baseline measured on the author's real corpus (21,754 lines, 0 bad).
-# Used only for a post-load diff report; never to fabricate counts.
-BASELINE: dict[str, Any] = {
-    "total": 21754,
-    "decision": {"allow": 20629, "deny": 1125},
-    "fail_closed": 5,
-    "tools": {
-        "bash": 7280,
-        "read": 3736,
-        "write": 3198,
-        "read_image": 2496,
-        "edit": 1546,
-    },
-    "unknown_category": 846,
-}
+# Optional baseline for a post-load regression report. Pass ``--baseline
+# path/to/baseline.json`` to compare this run against a previously measured
+# snapshot; without it, ingestion just reports the metrics it computed.
+# Counts are always recomputed from the data — a baseline never fabricates.
+#
+# baseline.json shape (all keys optional):
+#   {"total": 21754,
+#    "decision": {"allow": 20629, "deny": 1125},
+#    "fail_closed": 5,
+#    "unknown_category": 846,
+#    "tools": {"bash": 7280, "read": 3736}}
 
-# deny reason buckets, keyed by a substring of the reason header.
+
+def load_baseline(path: Path) -> dict[str, Any]:
+    """Load a baseline snapshot (see the shape documented above)."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"baseline must be a JSON object, got {type(data).__name__}")
+    return data
+
+
+# Deny reason buckets, keyed by a substring of the reason header. The defaults
+# follow the convention ``BLOCKED (<category>): <detail>`` / ``FAIL-CLOSED: …``
+# used by the reference permission gate; extend this list for your own gate's
+# vocabulary (unmatched reasons fall into "other").
 _REASON_BUCKETS = [
-    ("unknown, cannot verify rollback-ability", "unknown_unrollbackable"),
-    ("path NOT protected by Time Machine", "write_unprotected_path"),
-    ("network, not rollback-able", "network"),
-    ("process, not rollback-able", "process"),
+    ("BLOCKED (exfil", "exfil"),
+    ("BLOCKED (network", "network"),
+    ("BLOCKED (write", "write_unprotected_path"),
+    ("BLOCKED (process", "process"),
+    ("BLOCKED (package", "package"),
+    ("BLOCKED (unknown", "unknown_unrollbackable"),
+    ("FAIL-CLOSED", "fail_closed"),
     ("vcs_remote", "vcs_remote"),
-    ("package", "package"),
-    ("network, forced deny", "network_forced_deny"),
-    ("read, forced deny", "read_forced_deny"),
-    ("system, forced deny", "system_forced_deny"),
+    ("forced deny", "forced_deny"),
 ]
 
 
@@ -247,8 +255,15 @@ def _print_diff(name: str, actual: Any, expected: Any, *, monotonic: bool = Fals
     return ok
 
 
-def report_and_diff(metrics: dict[str, Any], quarantined_count: int) -> bool:
-    """Print metrics and diff against baseline. Returns True if healthy."""
+def report_and_diff(
+    metrics: dict[str, Any],
+    quarantined_count: int,
+    baseline: dict[str, Any] | None = None,
+) -> bool:
+    """Print metrics, and optionally diff them against a baseline snapshot.
+
+    Returns True when healthy (always True when no baseline was supplied).
+    """
     print("=" * 72)
     print("GuardLens ingestion report")
     print("=" * 72)
@@ -271,33 +286,37 @@ def report_and_diff(metrics: dict[str, Any], quarantined_count: int) -> bool:
     for bucket, n in Counter(metrics["deny_buckets"]).most_common():
         print(f"  {bucket:<28} {n}")
 
-    print("\n--- baseline diff (frozen 2026-09-19 snapshot; OK+ = grew) ---")
+    if baseline is None:
+        print("\n(no baseline supplied — pass --baseline baseline.json to diff against a snapshot)")
+        return True
+
+    print("\n--- baseline diff (OK+ = grew, LOSS = fewer rows than baseline) ---")
     results = [
-        _print_diff("total", metrics["total"], BASELINE["total"], monotonic=True),
+        _print_diff("total", metrics["total"], baseline["total"], monotonic=True),
         _print_diff(
             "allow",
             metrics["decision"].get("allow", 0),
-            BASELINE["decision"]["allow"],
+            baseline["decision"]["allow"],
             monotonic=True,
         ),
         _print_diff(
             "deny",
             metrics["decision"].get("deny", 0),
-            BASELINE["decision"]["deny"],
+            baseline["decision"]["deny"],
             monotonic=True,
         ),
-        # Structural invariants: the 5 fail-closed events are historical and
-        # must neither disappear nor be fabricated.
-        _print_diff("fail_closed", metrics["fail_closed"], BASELINE["fail_closed"]),
+        # Structural invariant: fail-closed events are historical and must
+        # neither disappear nor be fabricated.
+        _print_diff("fail_closed", metrics["fail_closed"], baseline["fail_closed"]),
         _print_diff(
             "unknown_category",
             metrics["categories"].get("unknown", 0),
-            BASELINE["unknown_category"],
+            baseline["unknown_category"],
             monotonic=True,
         ),
         _print_diff("quarantined", quarantined_count, 0),
     ]
-    for tool, expected in BASELINE["tools"].items():
+    for tool, expected in baseline.get("tools", {}).items():
         results.append(
             _print_diff(f"tool:{tool}", metrics["tools"].get(tool, 0), expected, monotonic=True)
         )
@@ -305,7 +324,7 @@ def report_and_diff(metrics: dict[str, Any], quarantined_count: int) -> bool:
     all_ok = all(results)
     print(
         "\nBASELINE HEALTH:",
-        "OK (no data loss vs frozen snapshot)"
+        "OK (no data loss vs baseline snapshot)"
         if all_ok
         else "UNHEALTHY — investigate (no hardcoding!)",
     )
@@ -348,7 +367,7 @@ def run_ingestion(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Ingest agent-gate audit.jsonl into DuckDB")
+    parser = argparse.ArgumentParser(description="Ingest an agent audit.jsonl into DuckDB")
     parser.add_argument(
         "--input",
         default="data/raw/audit.jsonl",
@@ -365,12 +384,28 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Redact /Users/<name>, emails, IPs, tokens (for public datasets)",
     )
+    parser.add_argument(
+        "--baseline",
+        default=None,
+        help=(
+            "Optional baseline.json from a previous run; prints a regression diff "
+            "and exits non-zero if data was lost"
+        ),
+    )
     args = parser.parse_args(argv)
 
     input_path = Path(args.input)
     if not input_path.exists():
         print(f"ERROR: input not found: {input_path}", file=sys.stderr)
         return 2
+
+    baseline = None
+    if args.baseline:
+        baseline_path = Path(args.baseline)
+        if not baseline_path.exists():
+            print(f"ERROR: baseline not found: {baseline_path}", file=sys.stderr)
+            return 2
+        baseline = load_baseline(baseline_path)
 
     metrics = run_ingestion(
         input_path,
@@ -379,7 +414,7 @@ def main(argv: list[str] | None = None) -> int:
         quarantine_path=Path(args.quarantine),
     )
     print(f"ingested in {metrics['elapsed_seconds']}s -> {args.db}")
-    ok = report_and_diff(metrics, metrics["quarantined"])
+    ok = report_and_diff(metrics, metrics["quarantined"], baseline)
     return 0 if ok else 1
 
 

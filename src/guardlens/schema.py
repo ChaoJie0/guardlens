@@ -1,6 +1,6 @@
 """Pydantic schema for agent-gate audit records (JSONL).
 
-Mirrors the upstream AuditRecord contract:
+Mirrors the upstream audit contract of an autonomous-agent permission gate:
 ts, tool, category, decision, reason, targetPaths, args, snapshotId?
 """
 
@@ -14,7 +14,7 @@ Decision = Literal["allow", "deny"]
 
 
 class Event(BaseModel):
-    """One validated agent-gate audit event.
+    """One validated audit event.
 
     ``model_config`` tolerates unknown fields (forward compatibility with
     newer plugin versions such as ``sandbox_permissions`` / ``justification``)
