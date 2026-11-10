@@ -47,7 +47,7 @@ Requirements: Python 3.12+ and [uv](https://docs.astral.sh/uv/). Optional:
 Docker (local Qdrant) and an OpenAI-compatible LLM key.
 
 ```bash
-git clone <your-fork> guardlens && cd guardlens
+git clone <repo-url> guardlens && cd guardlens
 uv sync
 
 # 1) try the pipeline on the bundled synthetic log (42 events, all fictional)
@@ -55,13 +55,8 @@ uv run python -m guardlens.ingest \
   --input data/sample/audit-sample.jsonl \
   --db data/derived/sample.duckdb
 
-# 2) open the dashboard (metrics tab works with no model, no Docker)
-uv run streamlit run app.py
-```
-
-Point the dashboard at your database:
-
-```bash
+# 2) open the dashboard on that database
+#    (the metrics and signal tabs need no model, no Docker, no API key)
 GUARDLENS_DB=data/derived/sample.duckdb uv run streamlit run app.py
 ```
 
@@ -74,6 +69,9 @@ uv run python -m guardlens.ingest \
   --input "/path/to/audit.jsonl" \
   --db data/derived/guardlens.duckdb
 ```
+
+The default database path is `data/derived/guardlens.duckdb`, so the dashboard
+picks it up without configuration.
 
 Record shape (one JSON object per line):
 
@@ -100,9 +98,8 @@ uv run streamlit run app.py                        # dashboard talks to :8000
 ```
 
 First indexing run downloads BGE-M3 (~2 GB) and the reranker; on Apple Silicon
-MPS is detected automatically (≈6.5 min for 5.5k docs) with CPU fallback. If
-Docker Hub is unreachable, pull the Qdrant image through a mirror and re-tag it
-(`docker compose` is configured with `pull_policy: never`).
+MPS is detected automatically (≈6.5 min for 5.5k docs) with CPU fallback. Qdrant
+is published on `127.0.0.1` only — it has no authentication, so do not expose it.
 
 ## Configuration
 
