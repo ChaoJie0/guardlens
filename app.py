@@ -2,14 +2,20 @@
 
 Tabs:
   • 看板 (W1): KPI / trend / category / tool table from DuckDB
-  • 问答 (W2): evidence-grounded RAG Q&A with streaming + evidence drawer
+  • 问答 (W2/W3): cited RAG Q&A with streaming + evidence drawer (via the API)
+  • 安全信号 (W3): risk families / bypass sequences / false-positive proxies
 
 Run:
     uv run streamlit run app.py
+
+Paths are configurable so the bundled sample can be opened without touching
+the default database:
+    GUARDLENS_DB=data/derived/sample.duckdb uv run streamlit run app.py
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import duckdb
@@ -17,9 +23,10 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-DB_PATH = Path("data/derived/guardlens.duckdb")
-CHROMA_PATH = Path("data/derived/chroma")  # W2 store, kept as fallback
-CORPUS_PATH = Path("data/derived/corpus/corpus.jsonl")
+DB_PATH = Path(os.environ.get("GUARDLENS_DB", "data/derived/guardlens.duckdb"))
+CHROMA_PATH = Path(os.environ.get("GUARDLENS_CHROMA", "data/derived/chroma"))  # W2 fallback
+CORPUS_PATH = Path(os.environ.get("GUARDLENS_CORPUS", "data/derived/corpus/corpus.jsonl"))
+API_BASE = os.environ.get("GUARDLENS_API_BASE", "http://127.0.0.1:8000")
 
 st.set_page_config(page_title="GuardLens · Agent 审计分析台", layout="wide")
 
@@ -132,17 +139,36 @@ def render_dashboard() -> None:
 # ---------------------------------------------------------------------------
 
 
-@st.cache_resource
-def get_engine():
-    # W3: router + guarded DuckDB stats + hybrid retrieval (BM25+dense RRF)
-    # + cross-encoder rerank. Requires `docker compose up -d` for Qdrant.
-    from guardlens.orchestrator import Orchestrator
+# Backend (FastAPI) host: heavy models load once there; this frontend just
+# streams events over HTTP, so browser refreshes never reload the models.
+# Configured at the top of the file via GUARDLENS_API_BASE.
 
-    return Orchestrator(
-        corpus_path=str(CORPUS_PATH),
-        db_path=str(DB_PATH),
-        k=5,
-    )
+
+def api_health() -> bool:
+    import httpx
+
+    try:
+        r = httpx.get(f"{API_BASE}/api/health", timeout=5)
+        return bool(r.json().get("ok", False))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def stream_question(question: str):
+    """POST /api/ask and yield decoded SSE events (same shape as Orchestrator.stream)."""
+    import json
+
+    import httpx
+
+    with httpx.stream(
+        "POST",
+        f"{API_BASE}/api/ask",
+        json={"question": question},
+        timeout=httpx.Timeout(connect=30, read=120, write=30, pool=30),
+    ) as r:
+        for line in r.iter_lines():
+            if line.startswith("data: "):
+                yield json.loads(line[6:])
 
 
 @st.cache_data
@@ -196,6 +222,13 @@ def render_qa() -> None:
         st.error(f"未找到可用 LLM 凭证：{exc}")
         st.stop()
 
+    if not api_health():
+        st.error(
+            "后端模型服务未启动。请先运行：`uv run uvicorn guardlens.server:app --port 8000`"
+            "（首次启动会加载本地模型，约 1 分钟）"
+        )
+        st.stop()
+
     question = st.text_input(
         "提问（证据 / 统计 / 混合类均可，自动路由）",
         placeholder="例如：拦截率多少？curl 被拦后有没有换 web_fetch？fail-closed 几起、什么场景？",
@@ -208,49 +241,52 @@ def render_qa() -> None:
         )
         return
 
-    engine = get_engine()
     answer_box = st.empty()
     route_box = st.empty()
+    progress_box = st.caption("⏳ 正在路由…")
     buf: list[str] = []
     hits: list = []
     route = stats = None
 
-    with st.spinner("路由 / 取数 / 检索 / 生成中…"):
-        for ev in engine.stream(question):
-            t = ev["type"]
-            if t == "route":
-                route = ev["route"]
-                route_box.info(f"查询路由：**{route}**")
-            elif t == "stats":
-                stats = ev["stats"]
-                if stats:
-                    st.caption(f"📐 确定性取数（原样透传）：{stats}")
-            elif t == "hit":
-                hits.append(ev["hit"])
-            elif t == "token":
-                buf.append(ev["delta"])
-                answer_box.markdown("".join(buf) + " ▌")
-            elif t == "final":
-                answer = ev["answer"]
-                answer_box.markdown(answer.text)
-                meta_cols = st.columns(4)
-                meta_cols[0].metric("有效引用", len(answer.valid_citations))
-                meta_cols[1].metric("非法引用", len(answer.invalid_citations))
-                meta_cols[2].metric("是否拒答", "是" if answer.abstained else "否")
-                meta_cols[3].metric("召回证据", len(answer.retrieved_ids))
-                if answer.invalid_citations:
-                    st.warning(f"模型引用了检索集之外/不存在的证据：{answer.invalid_citations}")
+    for ev in stream_question(question):
+        t = ev["type"]
+        if t == "route":
+            route = ev["route"]
+            route_box.info(f"查询路由：**{route}**")
+            progress_box.caption("🔎 取数 / 混合检索 + Rerank 中…")
+        elif t == "stats":
+            stats = ev["stats"]
+            if stats:
+                st.caption(f"📐 确定性取数（原样透传）：{stats}")
+        elif t == "hit":
+            hits.append(ev["hit"])
+        elif t == "token":
+            if buf:
+                progress_box.empty()  # 第一个 token 出现即清掉检索进度，进入打字机
+            buf.append(ev["delta"])
+            answer_box.markdown("".join(buf) + " ▌")
+        elif t == "final":
+            answer = ev["answer"]
+            answer_box.markdown(answer["text"])
+            meta_cols = st.columns(4)
+            meta_cols[0].metric("有效引用", len(answer["valid_citations"]))
+            meta_cols[1].metric("非法引用", len(answer["invalid_citations"]))
+            meta_cols[2].metric("是否拒答", "是" if answer["abstained"] else "否")
+            meta_cols[3].metric("召回证据", len(answer["retrieved_ids"]))
+            if answer["invalid_citations"]:
+                st.warning(f"模型引用了检索集之外/不存在的证据：{answer['invalid_citations']}")
 
     st.divider()
     st.subheader(f"证据（{len(hits)}）")
     for h in hits:
-        score = f"rerank {h.score:.3f}"
-        label = f"{h.evidence_id} · {h.doc_type} · {score} · {h.ts or ''}"
+        score = f"rerank {h['score']:.3f}"
+        label = f"{h['evidence_id']} · {h['doc_type']} · {score} · {h['ts'] or ''}"
         with st.expander(label):
             st.caption(
-                f"tool={h.tool or '-'} category={h.category or '-'} decision={h.decision or '-'}"
+                f"tool={h['tool'] or '-'} category={h['category'] or '-'} "
+                f"decision={h['decision'] or '-'}"
             )
-            st.text(h.text)
+            st.text(h["text"])
             _feedback_row(question, h)
 
 
@@ -258,15 +294,15 @@ def _feedback_row(question: str, h) -> None:
     """👍/👎 human confirmation loop; feedback goes to a separate DuckDB."""
     from guardlens.feedback import FEEDBACK_DB_DEFAULT, Feedback, add_feedback, verdict_counts
 
-    key = f"fb_{h.evidence_id}_{abs(hash(question)) % 100000}"
+    key = f"fb_{h['evidence_id']}_{abs(hash(question)) % 100000}"
     c1, c2, note_box = st.columns([1, 1, 6])
     if c1.button("👍 准确", key=f"{key}_up"):
         add_feedback(
             Feedback(
                 question=question,
-                evidence_id=h.evidence_id,
+                evidence_id=h["evidence_id"],
                 verdict="up",
-                answer_excerpt=h.text[:200],
+                answer_excerpt=h["text"][:200],
             ),
             FEEDBACK_DB_DEFAULT,
         )
@@ -275,9 +311,9 @@ def _feedback_row(question: str, h) -> None:
         add_feedback(
             Feedback(
                 question=question,
-                evidence_id=h.evidence_id,
+                evidence_id=h["evidence_id"],
                 verdict="down",
-                answer_excerpt=h.text[:200],
+                answer_excerpt=h["text"][:200],
             ),
             FEEDBACK_DB_DEFAULT,
         )
@@ -385,7 +421,7 @@ def render_signals() -> None:
 # Layout
 # ---------------------------------------------------------------------------
 
-st.title("🛡️ GuardLens — agent-gate 审计日志分析")
+st.title("🛡️ GuardLens — Agent 审计日志分析")
 tab_dash, tab_qa, tab_sig = st.tabs(
     ["📊 看板（W1）", "💬 问答（W3 混合检索+Rerank）", "🚨 安全信号（W3）"]
 )

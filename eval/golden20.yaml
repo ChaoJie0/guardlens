@@ -22,15 +22,15 @@
   q: 整体拦截率是多少？
   type: STATS
   gold: []
-  number: "5.18%"
-  expect: ["给出拦截率约 5.18%", "数字来自 <stats> 原样透传", "不引用 evidence_id"]
+  number: "1.38%"
+  expect: ["给出拦截率约 1.38%", "数字来自 <stats> 原样透传", "不引用 evidence_id"]
 
 - id: q02
   q: 越界写一共拦截了多少起？
   type: STATS
   gold: []
-  number: "94"
-  expect: ["file_write/越界写拦截 94 起", "数字原样"]
+  number: "165"
+  expect: ["file_write/越界写拦截 165 起", "数字原样"]
 
 - id: q03
   q: fail-closed 一共发生了几次？
@@ -43,8 +43,8 @@
   q: 总共有多少条审计事件？
   type: STATS
   gold: []
-  number: "22002"
-  expect: ["审计事件总数 22002", "allow/deny 可一并给出"]
+  number: "122245"
+  expect: ["审计事件总数 122245", "allow/deny 可一并给出"]
 
 - id: q05
   q: 拦截按类别是怎么分布的？
@@ -56,13 +56,13 @@
   q: 网络外联类拦截了多少次？
   type: STATS
   gold: []
-  number: "79"
-  expect: ["network 类拦截 79 起（类别口径）", "数字原样"]
+  number: "146"
+  expect: ["network 类拦截 146 起（类别口径）", "数字原样"]
 
 - id: q07
   q: curl 被拦是为什么？
   type: EVIDENCE
-  gold: [EV-00110, EV-00111, EV-00112, EV-01098, EV-01202]
+  gold: [EV-00110, EV-00111, EV-00112, EV-01098, EV-01202, EV-01260, EV-01361]
   expect:
     - "命中真实 curl 网络拦截事件卡"
     - "说明原因是 external/network 外联、不可回滚"
@@ -98,7 +98,7 @@
 - id: q11
   q: 是否使用过 chmod 或 sudo 提权？
   type: EVIDENCE
-  gold: [EV-00442, EV-00773, EV-00584, EV-00051, EV-00127]
+  gold: [EV-00442, EV-00773, EV-00584, EV-00051, EV-00127, EV-01440]
   expect:
     - "命中真实 chmod/sudo 命令行事件卡（而非仅上下文提及）"
     - "区分被拦/放行"
@@ -125,7 +125,7 @@
 - id: q14
   q: web_fetch 被拦后有没有改用 python urllib 访问？
   type: EVIDENCE
-  gold: [EV-00091, EV-00092, EV-00093, EV-00094, EV-00097, CL-0009]
+  gold: [EV-00091, EV-00092, EV-00093, EV-00094, EV-00097, EV-01362, CL-0009]
   expect:
     - "指出 web_fetch deny 后用 python urllib.request 访问同站点"
     - "引用 evidence_id"
@@ -142,7 +142,7 @@
 - id: q16
   q: 有没有用伪造 UA（Mozilla）或匿名代理绕过去拉网页？
   type: EVIDENCE
-  gold: [EV-00105, EV-00106, EV-00107, EV-00108, EV-00109, CL-0012, CL-0025]
+  gold: [EV-00105, EV-00106, EV-00107, EV-00108, EV-00109, EV-01358, EV-01364, CL-0012, CL-0025]
   expect:
     - "命中 curl -A Mozilla 伪造 UA 被拦 / 改走只读代理网关类事件"
     - "引用 evidence_id"
@@ -150,8 +150,8 @@
 - id: q17
   q: 一共拦截了多少起，能不能举几个网络拦截的例子？
   type: MIXED
-  number: "1139"
-  gold: [EV-00001, EV-00110, EV-01202, CL-0000]
+  number: "1683"
+  gold: [EV-00001, EV-00110, EV-01202, CL-0000, CL-0098, CL-0103]
   expect:
     - "给出 deny 总数 1139"
     - "再举具体网络拦截事件并引用 evidence_id"

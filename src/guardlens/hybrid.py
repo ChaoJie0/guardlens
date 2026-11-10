@@ -27,9 +27,10 @@ from .retriever import Hit
 from .vectorstore import Embedder
 
 RRF_K = 60
-DENSE_N = 40
-SPARSE_N = 40
-FUSE_N = 20
+DENSE_N = 60
+SPARSE_N = 60
+FUSE_N = 30
+RERANK_N = 45
 DEFAULT_TOP_K = 5
 
 # W2-style intent anchors preserved: rare real events must surface.
@@ -39,6 +40,12 @@ _STRUCTURED_FILTERS: list[tuple[str, dict[str, Any], list[str]]] = [
     ("提权", {}, ["sudo", "chmod", "chown"]),
     ("chmod", {}, ["chmod"]),
     ("sudo", {}, ["sudo"]),
+    ("curl", {}, ["curl"]),
+    ("web_fetch", {}, ["web_fetch"]),
+    ("urllib", {}, ["urllib", "urlopen"]),
+    ("Mozilla", {}, ["Mozilla"]),
+    ("npm", {}, ["npm i", "npm install"]),
+    ("node", {}, ["node -e", "node --eval"]),
 ]
 
 # Abstract Chinese phrasings -> the exact vocabulary the cards use. Each
@@ -142,7 +149,7 @@ class HybridRetriever:
                 out.append(h)
         return out
 
-    def structured_anchor(self, question: str, budget: int = 8) -> list[Hit]:
+    def structured_anchor(self, question: str, budget: int = 15) -> list[Hit]:
         """Exact metadata/keyword anchor for rare events (W2 fallback kept).
 
         For keyword intents (chmod/sudo) prefer cards whose *anchor body*
@@ -213,10 +220,14 @@ class HybridRetriever:
             return h.doc_type in ("event_card", "event_cluster")
 
         def _balanced(hits: list[Hit], per_type: int) -> list[Hit]:
-            """Type-balance one ranked channel: top events + top non-events."""
-            ev = [h for h in hits if _is_ev(h)][:per_type]
-            rp = [h for h in hits if not _is_ev(h)][:per_type]
-            return ev + rp
+            """Three-way type balance: event cards, event clusters, and the
+            rest. Clusters are scarce (123 vs 2038 cards) but dense/BM25 rank
+            them late because their text is long, so they get a reserved quota
+            instead of competing with cards for the same event slots."""
+            cards = [h for h in hits if h.doc_type == "event_card"][:per_type]
+            clusters = [h for h in hits if h.doc_type == "event_cluster"][: max(5, per_type // 5)]
+            rp = [h for h in hits if h.doc_type not in ("event_card", "event_cluster")][:per_type]
+            return cards + clusters + rp
 
         anchor = self.structured_anchor(question) if anchors else []
 
@@ -227,9 +238,23 @@ class HybridRetriever:
         all_ranked: list[list[str]] = []
         weights: list[float] = []
         all_hits: list[Hit] = []
+        # Strong single-channel matches must survive RRF dilution: the top-2 of
+        # every balanced channel enters the pool directly (capped at 12 after
+        # dedupe) so a #1-ranked event is not out-scored by docs present in
+        # many channels at mediocre ranks — without letting boosts monopolise
+        # the rerank input and starve the RRF-fused candidates. Clusters are a
+        # separate concern: the cross-encoder re-scores them well against the
+        # *expanded* query, but RRF naturally ranks them too low to enter the
+        # fused top-30, so each channel's best cluster is boosted too (capped 6).
+        boost_ids: list[str] = []
+        cluster_boost: list[str] = []
 
         def _absorb(hits: list[Hit], w: float):
             bal = _balanced(hits, FUSE_N)
+            boost_ids.extend(h.evidence_id for h in bal[:2])
+            clusters = [h for h in bal if h.doc_type == "event_cluster"]
+            if clusters:
+                cluster_boost.append(clusters[0].evidence_id)
             all_ranked.append([h.evidence_id for h in bal])
             weights.append(w)
             all_hits.extend(bal)
@@ -240,6 +265,9 @@ class HybridRetriever:
             _absorb(self.dense_search(eq, DENSE_N * 2), 0.6)
             _absorb(self.sparse_search(eq, SPARSE_N * 2), 0.6)
 
+        # Anchors are capped before the pool so a keyword-heavy question
+        # (npm+node, chmod+sudo) cannot monopolise the rerank input.
+        anchor = (anchor[:25] if anchors else []) if anchor else []
         fused = rrf_fuse(all_ranked, weights=weights, top_n=FUSE_N)
         anchor_ids = {h.evidence_id for h in anchor}
 
@@ -250,7 +278,39 @@ class HybridRetriever:
                 pool.append(h)
                 seen.add(h.evidence_id)
         hit_by_id = {h.evidence_id: h for h in all_hits + anchor}
-        for evidence_id, _rrf in fused:
+        boost_seen: set[str] = set()
+        boost_final: list[str] = []
+        for evidence_id in boost_ids:
+            if evidence_id in boost_seen or evidence_id in seen:
+                continue
+            boost_seen.add(evidence_id)
+            boost_final.append(evidence_id)
+            if len(boost_final) >= 12:
+                break
+        for evidence_id in boost_final:  # strong single-channel matches
+            h = hit_by_id.get(evidence_id) or self._hit_from_doc(evidence_id)
+            if h:
+                pool.append(h)
+                seen.add(evidence_id)
+        # Per-channel best cluster (deduped, capped 6) enters ahead of the RRF
+        # remainder: sequence-evidence clusters rank top in BM25 across several
+        # expansion channels yet fall out of the fused top-30, and the
+        # cross-encoder only scores them correctly against the expanded query.
+        cl_boost_seen: set[str] = set()
+        cl_boost_final: list[str] = []
+        for evidence_id in cluster_boost:
+            if evidence_id in cl_boost_seen or evidence_id in seen:
+                continue
+            cl_boost_seen.add(evidence_id)
+            cl_boost_final.append(evidence_id)
+            if len(cl_boost_final) >= 6:
+                break
+        for evidence_id in cl_boost_final:
+            h = hit_by_id.get(evidence_id) or self._hit_from_doc(evidence_id)
+            if h:
+                pool.append(h)
+                seen.add(evidence_id)
+        for evidence_id, _rrf in fused:  # then the RRF-fused remainder
             if evidence_id in seen:
                 continue
             h = hit_by_id.get(evidence_id) or self._hit_from_doc(evidence_id)
@@ -272,16 +332,45 @@ class HybridRetriever:
             return h.doc_type in ("event_card", "event_cluster")
 
         # The pool is already type-balanced per channel; anchors enter first.
-        non_anchor = [h for h in pool if h.evidence_id not in anchor_ids][: FUSE_N - len(anchor)]
-        rerank_input = list(anchor) + non_anchor
+        non_anchor = [h for h in pool if h.evidence_id not in anchor_ids][: RERANK_N - len(anchor)]
+        rerank_input = (list(anchor) + non_anchor)[:RERANK_N]
         if rerank:
             if self.reranker is None:
                 self.reranker = Reranker()
-            ranked = self.reranker.rerank(question, rerank_input, top_k=FUSE_N)
+            # Rerank against the question PLUS its intent expansions. Abstract
+            # phrasings ("有没有绕过网络限制的尝试？") score long cluster texts
+            # poorly, while the concrete expansion ("curl denied then
+            # web_fetch") lifts the same clusters to the top; the expanded
+            # query is what the fusion pool was built from, so rerank with it.
+            rerank_query = question
+            if anchors:
+                exps = _expand(question)
+                if exps:
+                    seen_q: set[str] = set()
+                    parts = [question]
+                    for e in exps:
+                        if e not in seen_q:
+                            seen_q.add(e)
+                            parts.append(e)
+                            if len(parts) >= 4:
+                                break
+                    rerank_query = " ".join(parts)
+            ranked = self.reranker.rerank(rerank_query, rerank_input, top_k=FUSE_N)
             ranked_anchor = [h for h in ranked if h.evidence_id in anchor_ids]
             payload_hits = [h for h in ranked_anchor if h.evidence_id in payload_ids]
             keyword_hits = [h for h in ranked_anchor if h.evidence_id not in payload_ids]
             kept = payload_hits[: min(len(payload_hits), k)]
+            # Keyword anchors promote recall of exact events, but a low-scoring
+            # anchor (e.g. `sudo` on the command line of an unrelated card)
+            # must not displace a genuinely relevant rerank hit. Only anchors
+            # scoring at/above the rerank median get pinned; the rest fall
+            # through to the normal rerank ordering.
+            if ranked:
+                _med = sorted(float(h.score) for h in ranked)[len(ranked) // 2]
+            else:
+                _med = 0.0
+            if keyword_hits and ranked:
+                keyword_hits = [h for h in keyword_hits if float(h.score) >= _med]
             kept += keyword_hits[: max(0, k - 1 - len(kept))]
             have = {h.evidence_id for h in kept}
 
@@ -293,11 +382,27 @@ class HybridRetriever:
             # The cross-encoder scores long report/cluster text inconsistently
             # and can demote the top RRF evidence (e.g. the event cluster that
             # summarises an evasion sequence). Anchor the result with the single
-            # best RRF candidate, then fill the rest by rerank relevance.
+            # best RRF candidate, then fill the rest by rerank relevance — but
+            # only if the cross-encoder itself scored it at/above the median,
+            # so a boosted-but-irrelevant candidate can never be pinned on top.
             if non_anchor:
                 top_rrf = non_anchor[0]
-                if top_rrf.evidence_id not in {h.evidence_id for h in chosen[: k - 1]}:
+                top_rrf_ok = top_rrf.evidence_id not in {h.evidence_id for h in chosen[: k - 1]}
+                if top_rrf_ok and float(getattr(top_rrf, "score", 0.0) or 0.0) >= _med:
                     chosen = self._dedupe([top_rrf] + chosen)[:k]
+            # Sequence-intent questions (intent expansion active) are best
+            # answered with a cluster: it summarises the whole evasion session,
+            # but the cross-encoder ranks report chunks slightly higher. When
+            # the query was expanded AND a cluster scored at/above the rerank
+            # median, guarantee one cluster slot so the LLM sees session-level
+            # evidence, not only per-event cards/report rows.
+            if rerank_query != question and not any(h.doc_type == "event_cluster" for h in chosen):
+                best_cl = next(
+                    (h for h in ranked if h.doc_type == "event_cluster" and float(h.score) >= _med),
+                    None,
+                )
+                if best_cl and best_cl.evidence_id not in {h.evidence_id for h in chosen[: k - 1]}:
+                    chosen = self._dedupe(chosen[: k - 1] + [best_cl])[:k]
             # Safety: never return a top-k with no event card when one exists.
             if not any(_is_event(h) for h in chosen):
                 best_event = next((h for h in rest if _is_event(h)), None)
