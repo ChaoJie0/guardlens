@@ -62,3 +62,38 @@ jobs:
             --input data/sample/audit-sample.jsonl \
             --db data/derived/ci-sample.duckdb \
             --quarantine data/quarantine/ci-quarantine.jsonl
+
+  build:
+    name: build (sdist + wheel)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Build
+        run: uv build
+
+      - name: Inspect the wheel contents
+        run: |
+          python3 - <<'PY'
+          import glob, sys, zipfile, tarfile
+
+          bad_markers = (".venv", "data/derived", "data/raw", "fp-proxies", "__pycache__", ".log", ".pytest_cache")
+
+          for whl in glob.glob("dist/*.whl"):
+              names = zipfile.ZipFile(whl).namelist()
+              print(f"{whl}: {len(names)} files")
+              leaks = [n for n in names if any(m in n for m in bad_markers)]
+              assert not leaks, f"unexpected files in wheel: {leaks}"
+
+          for tar in glob.glob("dist/*.tar.gz"):
+              names = tarfile.open(tar).getnames()
+              print(f"{tar}: {len(names)} files")
+              leaks = [n for n in names if any(m in n for m in bad_markers)]
+              assert not leaks, f"unexpected files in sdist: {leaks}"
+          PY
