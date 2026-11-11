@@ -9,6 +9,7 @@ from SQL, and everything runs on your own machine.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
+[![CI](https://github.com/ChaoJie0/guardlens/actions/workflows/ci.yml/badge.svg)](https://github.com/ChaoJie0/guardlens/actions/workflows/ci.yml)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
 ---
@@ -47,7 +48,7 @@ Requirements: Python 3.12+ and [uv](https://docs.astral.sh/uv/). Optional:
 Docker (local Qdrant) and an OpenAI-compatible LLM key.
 
 ```bash
-git clone <repo-url> guardlens && cd guardlens
+git clone https://github.com/ChaoJie0/guardlens.git && cd guardlens
 uv sync
 
 # 1) try the pipeline on the bundled synthetic log (42 events, all fictional)
