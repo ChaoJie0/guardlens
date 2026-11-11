@@ -7,11 +7,6 @@ requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
 
-[project.urls]
-Homepage = "https://github.com/ChaoJie0/guardlens"
-Repository = "https://github.com/ChaoJie0/guardlens"
-Issues = "https://github.com/ChaoJie0/guardlens/issues"
-Changelog = "https://github.com/ChaoJie0/guardlens/blob/main/CHANGELOG.md"
 authors = [
     { name = "Chaojie Tian" },
 ]
@@ -50,6 +45,12 @@ dependencies = [
     "uvicorn[standard]>=0.53.0",
     "httpx>=0.28.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ChaoJie0/guardlens"
+Repository = "https://github.com/ChaoJie0/guardlens"
+Issues = "https://github.com/ChaoJie0/guardlens/issues"
+Changelog = "https://github.com/ChaoJie0/guardlens/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [
