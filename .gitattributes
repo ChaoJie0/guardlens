@@ -1,0 +1,20 @@
+* text=auto eol=lf
+
+*.py    text
+*.md    text
+*.yml   text
+*.yaml  text
+*.toml  text
+*.json  text
+*.jsonl text
+*.cff   text
+*.lock  text
+
+LICENSE text
+Makefile text
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.duckdb binary
+*.zstd binary

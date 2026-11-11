@@ -92,7 +92,7 @@
   gold: [EV-01128, EV-00155, EV-00164, EV-00048]
   expect:
     - "命中真实 file_write 拦截事件卡"
-    - "原因是写入未被 Time Machine 保护的沙箱外路径"
+    - "原因是写入路径不在回滚保护范围内"
     - "引用 evidence_id"
 
 - id: q11

@@ -6,10 +6,6 @@ MPS vs ~4 pairs/s on CPU; reranking the fused top-20 is ~2-3s.
 
 from __future__ import annotations
 
-import os
-
-os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-
 import torch  # noqa: E402
 from sentence_transformers import CrossEncoder  # noqa: E402
 

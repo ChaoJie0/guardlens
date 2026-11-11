@@ -73,4 +73,4 @@ interpretation and the tuning log.
 * E2E scoring needs an LLM key; `--ablation-only` needs none and is what CI can
   run cheaply.
 * Recall is computed on gold ids, which understates answers that cite
-  equivalent real evidence (documented in the W5 section of the README).
+  equivalent real evidence, so treat it as a lower bound.

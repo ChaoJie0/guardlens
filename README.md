@@ -98,8 +98,10 @@ uv run streamlit run app.py                        # dashboard talks to :8000
 ```
 
 First indexing run downloads BGE-M3 (~2 GB) and the reranker; on Apple Silicon
-MPS is detected automatically (≈6.5 min for 5.5k docs) with CPU fallback. Qdrant
-is published on `127.0.0.1` only — it has no authentication, so do not expose it.
+MPS is detected automatically (≈6.5 min for 5.5k docs) with CPU fallback. The
+models come from the Hugging Face Hub — set `HF_ENDPOINT` if you need a mirror,
+and `HF_HUB_OFFLINE=1` to reuse an existing cache. Qdrant is published on
+`127.0.0.1` only — it has no authentication, so do not expose it.
 
 ## Configuration
 
@@ -155,6 +157,12 @@ unanswerable questions), retrieval ablation, citation and abstention accuracy:
 Hybrid retrieval lifts Recall@5 from ~14% (dense only) to ~52%, and the
 cross-encoder to ~66% on the same questions. Results, caveats and how to
 reproduce: [docs/evaluation.md](docs/evaluation.md).
+
+> These numbers were measured on the author's own audit corpus, which is not
+> distributed with the repo (the golden set's evidence ids refer to it). A
+> fresh clone has to build its own corpus first — the commands below run the
+> ablation grid over whatever corpus you point `--corpus` at, and on the
+> bundled 42-event sample they will simply score low.
 
 ```bash
 uv run python -m eval.run_eval --ablation-only   # no LLM key needed

@@ -16,7 +16,6 @@ from typing import Any
 
 # Prefer the domestic HF mirror before importing the heavy stack; harmless if
 # unreachable (the normal hub is used as fallback).
-os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 

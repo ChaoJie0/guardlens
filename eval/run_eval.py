@@ -560,6 +560,18 @@ def main() -> None:
     ap.add_argument("--k", type=int, default=DEFAULT_TOP_K)
     args = ap.parse_args()
 
+    corpus = Path(args.corpus)
+    if not corpus.exists():
+        raise SystemExit(
+            f"corpus not found: {corpus}\n"
+            "The evaluation runs on a corpus you build yourself:\n"
+            "  python -m guardlens.ingest --input <audit.jsonl> --db <db>\n"
+            "  python -m guardlens.build_index --db <db>\n"
+            "  python -m guardlens.migrate_qdrant\n"
+            "then re-run with --corpus <path>. The golden ids below come from\n"
+            "the author's private corpus and will not match a fresh index."
+        )
+
     cases = load_golden(args.golden)
     retriever = build_retriever(args.corpus)
     from guardlens.orchestrator import load_existing_ids
